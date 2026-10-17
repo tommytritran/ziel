@@ -1,11 +1,14 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowRight, Bike, BusFront, Check, ChevronRight, Clock3, Footprints, MapPin, Mouse, RotateCcw, Ship, TrainFront } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, Bike, BusFront, CableCar, Check, ChevronRight, Clock3, Footprints, MapPin, Mouse, Plane, RotateCcw, Ship, TrainFront } from 'lucide-react';
 import type { Journey } from './commute';
 import { dateLabel, minutes, timeLabel } from './commute';
 import { buildStory, formatElapsed, modeName, storyPosition, transitMotion } from './story';
 import type { VehicleKind } from './story';
 import { upcomingDepartures } from './departures';
 import LeaveCue from './LeaveCue';
+import { metroJourney } from './metro';
+import PhoneDepartures from './PhoneDepartures';
+import { journeyAtmosphere } from './atmosphere';
 const JourneyScene = lazy(() => import('./JourneyScene'));
 export function ModeIcon({ kind, size = 18 }: { kind: VehicleKind; size?: number }) {
   if (kind === 'walk') return <Footprints size={size}/>;
@@ -13,6 +16,8 @@ export function ModeIcon({ kind, size = 18 }: { kind: VehicleKind; size?: number
   if (kind === 'bus') return <BusFront size={size}/>;
   if (kind === 'ferry') return <Ship size={size}/>;
   if (kind === 'bike') return <Bike size={size}/>;
+  if (kind === 'plane') return <Plane size={size}/>;
+  if (kind === 'cable') return <CableCar size={size}/>;
   return <TrainFront size={size}/>;
 }
 export default function JourneyStory({ journey, journeys, selected, chosen, onSelect, onRefresh, fromName, toName, preview, onSetup, onExploring }: { journey: Journey; journeys: Journey[]; selected: number; chosen: boolean; onSelect: (index: number) => void; onRefresh: () => void; fromName: string; toName: string; preview: boolean; onSetup: () => void; onExploring: (active: boolean) => void }) {
@@ -46,12 +51,13 @@ export default function JourneyStory({ journey, journeys, selected, chosen, onSe
     const board = monitor.current;
     const viewport = sceneViewport.current;
     if (!board || !viewport) return;
-    const scale = Math.max(.25, width / 276);
+    const scale = Math.max(1, width / 24);
     const parentWidth = viewport.parentElement?.clientWidth ?? viewportWidth;
     board.style.left = `${viewport.offsetLeft + x}px`;
     board.style.top = `${viewport.offsetTop + y}px`;
     board.style.setProperty('--monitor-scale', String(scale));
     board.style.setProperty('--monitor-expanded-scale', String(Math.min(scale * 2.8, parentWidth * .86 / 276)));
+    board.style.setProperty('--phone-center', `${parentWidth / 2}px`);
     board.dataset.positioned = 'true';
   }, []);
   const total = stages.reduce((sum, s) => sum + s.seconds, 0);
@@ -61,13 +67,15 @@ export default function JourneyStory({ journey, journeys, selected, chosen, onSe
   const walking = current.stage.kind === 'walk';
   const waiting = current.stage.kind === 'wait';
   const motion = transitMotion(stages, current.index, current.local, reduced);
+  const metro = metroJourney(stages, current.index, current.local);
   const arrivingVehicle = !walking && !waiting && motion.arriving;
   const boarding = !walking && !waiting && motion.boarding;
   const elapsed = total * progress;
   const stageElapsed = current.stage.seconds * current.local;
   const first = journey.legs[0];
   const last = journey.legs[journey.legs.length - 1];
-  const title = starting ? 'Your journey,\nstep by step.' : arrived ? `You’ve arrived.` : waiting ? 'A moment at the stop.' : walking ? current.index === stages.length - 1 ? 'The final few steps.' : 'Start with a walk.' : arrivingVehicle ? 'Here comes your ride.' : boarding ? 'Your ride is here.' : 'On your way.\nEnjoy the journey.';
+  const atmosphere = journeyAtmosphere(first.expectedStartTime, last.expectedEndTime, progress);
+  const title = starting ? 'Your journey,\nstep by step.' : arrived ? `You’ve arrived.` : metro.phase === 'descending' ? 'Down to the platform.' : metro.phase === 'ascending' ? 'Back to street level.' : metro.metro && current.local >= .2 && current.local < .85 ? 'Through the city.\nUnder the streets.' : waiting ? 'A moment at the stop.' : walking ? current.index === stages.length - 1 ? 'The final few steps.' : 'Start with a walk.' : arrivingVehicle ? 'Here comes your ride.' : boarding ? 'Your ride is here.' : 'On your way.\nEnjoy the journey.';
   const caption = starting ? `From ${fromName} to ${toName}. Choose a departure, then scroll to explore your route.` : arrived ? `Welcome to ${toName}. You’ve reached your destination.` : waiting ? `Wait at ${current.stage.leg.fromPlace.name}. Your next ride is on its way.` : walking ? `Walk to ${current.index === stages.length - 1 ? toName : current.stage.leg.toPlace.name}.` : `${modeName(current.stage.kind)} ${current.stage.leg.line?.publicCode ?? ''} from ${current.stage.leg.fromPlace.name} to ${current.stage.leg.toPlace.name}.`;
   const seek = useCallback((next: number) => {
     const node = scroll.current;
@@ -88,12 +96,12 @@ export default function JourneyStory({ journey, journeys, selected, chosen, onSe
     if (event.key === 'Home') { event.preventDefault(); seek(0); }
     if (event.key === 'End') { event.preventDefault(); seek(1); }
   }}>
-    <div className="scroll-track"><section className={`story-screen ${arrived ? 'is-arrived' : ''} ${starting ? 'is-starting' : ''}`} data-testid="journey-story" data-mode={current.stage.kind} data-progress={progress.toFixed(3)}>
+    <div className="scroll-track"><section className={`story-screen ${arrived ? 'is-arrived' : ''} ${starting ? 'is-starting' : ''} ${atmosphere.darkness > .55 ? 'night-scene' : ''}`} style={{ background: `radial-gradient(ellipse at 75% 27%,${atmosphere.horizon},${atmosphere.sky})` }} data-testid="journey-story" data-time-period={atmosphere.period} data-mode={current.stage.kind} data-progress={progress.toFixed(3)}>
       <div className="story-top"><div className="journey-context"><span className={preview ? 'example-badge' : 'live-badge'}><span/>{preview ? 'EXAMPLE JOURNEY' : 'YOUR PLANNED JOURNEY'}</span><span className="context-route"><span>{fromName}</span><ArrowRight size={13}/><span>{toName}</span></span></div><span className="total-time"><Clock3 size={14}/>{minutes(total)} min total</span></div>
       <div className="story-copy"><span className="chapter-label">{arrived ? 'YOU MADE IT' : `CHAPTER ${String(current.index + 1).padStart(2, '0')} / ${String(stages.length).padStart(2, '0')}`}<span className="chapter-line"/>{arrived ? 'THE HAPPY ENDING' : current.stage.label.toUpperCase()}</span><h1>{title.split('\n').map((line, index) => <span key={line}>{index > 0 && <br/>}{line}</span>)}</h1><p>{caption}</p></div>
-      <div className="sky-sun" aria-hidden="true"><span/><span/><span/><span/></div><div className="cloud cloud-one" aria-hidden="true"/><div className="cloud cloud-two" aria-hidden="true"/>
-      <div ref={sceneViewport} className="scene-viewport" role="img" aria-label={`Illustrated journey: ${starting ? `checking departures from ${fromName}` : arrived ? `arrived at ${toName}` : boarding ? `boarding ${current.stage.kind}` : current.stage.label}`}><Suspense fallback={<div className="scene-loading">Preparing your journey visualization…</div>}><JourneyScene stages={stages} progress={progress} reduced={reduced} onMonitorLayout={placeMonitor} onActorLayout={placeBubble} /></Suspense></div>
-      {starting && <section ref={monitor} className="departure-board anchored-monitor" aria-label="Upcoming departures" tabIndex={0}><div className="departure-board-top"><span className="board-light"/><span>{'DEPARTURES'}<strong>Choose your departure</strong></span><span className="board-arrow">↗</span></div>{departures.length ? <><div className="departure-board-columns"><span>LINE / TOWARDS</span><span>DEPARTS</span></div><ol>{departures.map(departure => <li key={departure.id}><button type="button" className="departure-choice" aria-label={`Take ${departure.line} to ${departure.destination} at ${timeLabel(departure.time)}`} aria-pressed={chosen && departure.journeyIndices.includes(selected)} onClick={() => onSelect(departure.journeyIndices.includes(selected) ? selected : departure.journeyIndices[0])}><span className="board-line"><ModeIcon kind={departure.kind} size={13}/>{departure.line}</span><span className="board-destination">{departure.destination}<small>From {departure.stop}</small></span><time dateTime={departure.time}>{timeLabel(departure.time)}</time>{chosen && departure.journeyIndices.includes(selected) && <Check className="departure-selected-check" size={11}/>}</button></li>)}</ol></> : <div className="board-walk-only"><Footprints size={18}/><span>No transit needed.<strong>This one’s a walk.</strong><button type="button" className="choose-walk" aria-pressed={chosen} onClick={() => onSelect(selected)}>Choose this walk <ArrowRight size={12}/></button></span></div>}<div className="departure-board-footer"><span/>{preview ? 'EXAMPLE · CLICK A DEPARTURE' : chosen ? 'CHOSEN · REFRESH TO REPLAN' : 'ENTUR · CLICK A DEPARTURE'}</div></section>}
+      <div className={`sky-sun ${atmosphere.darkness > .65 ? 'sky-moon' : ''}`} aria-hidden="true" data-testid="journey-sun" data-celestial={atmosphere.darkness > .65 ? 'moon' : 'sun'} style={{ transform: reduced ? 'none' : `translate(${-progress * 84}px, ${-progress * 19}px) rotate(${progress * 24}deg)` }}><span/><span/><span/><span/></div><div className="night-stars" aria-hidden="true" style={{ opacity: atmosphere.darkness ** 1.5 }}>{Array.from({length:56},(_,i)=><i key={i} style={{left:`${5+(i*37.73)%90}%`,top:`${5+(i*17.31)%32}%`,width:i%7===0?'3px':'2px',height:i%7===0?'3px':'2px',opacity:.65+(i%4)*.1}}/>)}</div><div className="cloud cloud-one" aria-hidden="true"/><div className="cloud cloud-two" aria-hidden="true"/>
+      <div ref={sceneViewport} className="scene-viewport" role="img" aria-label={`Illustrated journey: ${starting ? `checking departures from ${fromName}` : arrived ? `arrived at ${toName}` : boarding ? `boarding ${current.stage.kind}` : current.stage.label}`}><Suspense fallback={<div className="scene-loading">Preparing your journey visualization…</div>}><JourneyScene stages={stages} progress={progress} reduced={reduced} darkness={atmosphere.darkness} fogColor={atmosphere.sky} onMonitorLayout={placeMonitor} onActorLayout={placeBubble} /></Suspense></div>
+      {starting && <PhoneDepartures anchor={monitor} departures={departures} chosen={chosen} selected={selected} preview={preview} onSelect={onSelect}/>}
       {chosen && <LeaveCue journey={journey} preview={preview} onStart={() => seek(Math.max(.025, stages[0].start))} onRefresh={onRefresh}/>}
       <div ref={locationBubble} className={`floating-sign tracking-bubble ${waiting ? 'waiting-bubble' : ''}`} data-testid="location-bubble"><span className="sign-icon" style={{ background: arrived ? '#a7bd92' : current.stage.color }}>{arrived ? <MapPin size={17}/> : <ModeIcon kind={current.stage.kind} size={17}/>}</span><span><small>{arrived ? 'YOU ARE HERE' : waiting ? 'TAKE A BREATHER' : walking ? 'ON FOOT' : boarding ? 'ALL ABOARD' : 'ENJOY THE RIDE'}</small><strong>{arrived ? toName : waiting ? current.stage.leg.fromPlace.name : current.stage.leg.toPlace.name}</strong>{waiting && <span className="waiting-dots" aria-label="Waiting for your ride"><i/><i/><i/></span>}</span>{arrived && <Check size={17}/>}</div>
       <div className="stage-time"><div className="stage-time-icon" style={{ color: current.stage.color }}><ModeIcon kind={current.stage.kind} size={20}/></div><div><span>{arrived ? 'Journey complete' : `${formatElapsed(stageElapsed)} / ${formatElapsed(current.stage.seconds)}`}</span><small>{arrived ? 'You’ve reached your destination.' : `${minutes(current.stage.seconds)} min ${walking ? 'of walking' : waiting ? 'at the stop' : `by ${modeName(current.stage.kind).toLowerCase()}`}`}</small></div><svg viewBox="0 0 38 38" className="time-ring" aria-hidden="true"><circle cx="19" cy="19" r="16"/><circle cx="19" cy="19" r="16" style={{ strokeDasharray: 100.53, strokeDashoffset: 100.53 * (1 - current.local), stroke: current.stage.color }}/></svg></div>

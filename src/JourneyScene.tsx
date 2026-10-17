@@ -7,20 +7,28 @@ import { destinationEntry, storyPosition, transitMotion, waitingVehicle } from '
 import { buildIllustratedRoute } from './routeGeometry';
 import type { IllustratedRoute } from './routeGeometry';
 import RouteScenery from './RouteScenery';
+import { METRO_DEPTH, metroJourney } from './metro';
+import MetroScenery, { CutawayGround, StationSign } from './MetroScenery';
+import MetroTrain from './MetroTrain';
+import { overlapsUndergroundWindow } from './undergroundWindow';
+import UndergroundMask from './UndergroundMask';
+import StreetLights from './StreetLights';
+import Tram from './Tram';
+import Bus from './Bus';
 
 function RoutePlacement({ route, distance, children }: { route: IllustratedRoute; distance: number; children: ReactNode }) {
   const p = route.sample(distance);
   return <group position={[p.x, 0, p.z]} rotation={[0, p.yaw, 0]}><group position={[-distance, 0, 0]}>{children}</group></group>;
 }
 
-interface Props { stages: StoryStage[]; progress: number; reduced: boolean; onMonitorLayout: (x: number, y: number, width: number, viewportWidth: number) => void; onActorLayout: (x: number, y: number, actor: 'character' | 'vehicle') => void }
+interface Props { stages: StoryStage[]; progress: number; reduced: boolean; darkness: number; fogColor: string; onMonitorLayout: (x: number, y: number, width: number, viewportWidth: number) => void; onActorLayout: (x: number, y: number, actor: 'character' | 'vehicle') => void }
 function Box({ position, size, color, radius = 0 }: { position: [number, number, number]; size: [number, number, number]; color: string; radius?: number }) {
   return <mesh position={position} castShadow receiveShadow><boxGeometry args={size}/><meshStandardMaterial color={color} roughness={radius || .85}/></mesh>;
 }
 function Ball({ position, size, color }: { position: [number, number, number]; size: [number, number, number]; color: string }) {
   return <mesh position={position} scale={size} castShadow><sphereGeometry args={[1, 20, 14]}/><meshStandardMaterial color={color} roughness={.9}/></mesh>;
 }
-function Character({ phase, walking, arrived, waiting, reduced }: { phase: number; walking: boolean; arrived: boolean; waiting: boolean; reduced: boolean }) {
+function Character({ phase, walking, arrived, waiting, reduced, checkingPhone }: { phase: number; walking: boolean; arrived: boolean; waiting: boolean; reduced: boolean; checkingPhone: boolean }) {
   const stride = walking ? Math.sin(phase) * .65 : 0;
   const body = useRef<THREE.Group>(null);
   const wrist = useRef<THREE.Group>(null);
@@ -37,6 +45,11 @@ function Character({ phase, walking, arrived, waiting, reduced }: { phase: numbe
     return () => document.removeEventListener('visibilitychange', resume);
   }, [waiting, reduced, invalidate]);
   useFrame((_, delta) => {
+    if (checkingPhone) {
+      if (wrist.current) wrist.current.rotation.z = 1.7;
+      if (head.current) { head.current.rotation.z = -.32; head.current.rotation.y = -.2; }
+      return;
+    }
     if (!waiting) return;
     const animate = !reduced && !document.hidden;
     if (animate) waitingTime.current += Math.min(delta, .05);
@@ -62,7 +75,8 @@ function Character({ phase, walking, arrived, waiting, reduced }: { phase: numbe
     <Ball position={[0, .94, .06]} size={[.27, .38, .23]} color="#ea7255"/>
     <Box position={[-.21, 1, -.11]} size={[.17, .43, .28]} color="#8d80b3"/>
     <group ref={wrist} position={[.02, 1.14, .29]} rotation={[0, 0, arrived ? -2 : -stride * .8]}>{waiting ? <><Ball position={[0, -.13, 0]} size={[.085, .17, .085]} color="#ed7e60"/><group ref={forearm} position={[0, -.26, 0]}><Ball position={[0, -.13, 0]} size={[.075, .17, .075]} color="#efbd93"/><Ball position={[0, -.29, 0]} size={[.085, .09, .085]} color="#efbd93"/><Box position={[0, -.22, 0]} size={[.18, .09, .18]} color="#a58470"/><mesh position={[0, -.22, .105]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.095, .095, .035, 20]}/><meshStandardMaterial color="#f9e7b2"/></mesh><Box position={[.025, -.205, .128]} size={[.055, .014, .012]} color="#66546c"/><Box position={[0, -.19, .128]} size={[.014, .06, .012]} color="#66546c"/></group></> : <><Ball position={[0, -.2, 0]} size={[.085, .25, .085]} color="#ed7e60"/><Ball position={[0, -.43, 0]} size={[.083, .09, .085]} color="#edba8e"/></>}</group>
-    <group position={[.02, 1.14, -.19]} rotation={[0, 0, stride * .8]}><Ball position={[0, -.2, 0]} size={[.085, .25, .085]} color="#df684f"/></group>
+    <group position={[.02, 1.14, -.19]} rotation={[0, 0, checkingPhone ? 1.2 : stride * .8]}><Ball position={[0, -.2, 0]} size={[.085, .25, .085]} color="#df684f"/></group>
+    {checkingPhone && <group position={[.46, 1.3, .32]} rotation={[0, -.12, -.12]}><Box position={[0, 0, 0]} size={[.23, .38, .055]} color="#5b526c"/><mesh position={[0, 0, .031]}><planeGeometry args={[.18, .3]}/><meshBasicMaterial color="#e9d8b5"/></mesh><Box position={[0, .07, .037]} size={[.13, .025, .005]} color="#a88ab5"/><Box position={[0, 0, .037]} size={[.13, .025, .005]} color="#88aaa0"/><Box position={[0, -.07, .037]} size={[.13, .025, .005]} color="#b79483"/></group>}
     <group ref={head} position={[0, 1.45, .06]}><group position={[0, -1.45, -.06]}>
     <Ball position={[.02, 1.54, .06]} size={[.215, .25, .215]} color="#efbd93"/>
     <Ball position={[-.055, 1.67, .03]} size={[.215, .17, .22]} color="#493f4f"/>
@@ -76,9 +90,12 @@ function Character({ phase, walking, arrived, waiting, reduced }: { phase: numbe
 function Wheels({ long }: { long: boolean }) {
   return <>{[-1, 1].flatMap(side => [-1, 1].map(end => <group key={`${side}-${end}`} position={[end * (long ? 1.1 : .87), .35, side * .53]}><mesh rotation={[Math.PI / 2, 0, 0]} castShadow><cylinderGeometry args={[.29, .29, .15, 20]}/><meshStandardMaterial color="#494456"/></mesh><mesh position={[0, 0, side * .08]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.13, .13, .012, 16]}/><meshStandardMaterial color="#e8decc"/></mesh></group>))}</>;
 }
-function Vehicle({ kind, door }: { kind: VehicleKind; door: number }) {
+function Vehicle({ kind, door, line, destination }: { kind: VehicleKind; door: number; line: string; destination: string }) {
+  if (kind === 'metro') return <MetroTrain door={door} line={line} destination={destination}/>;
+  if (kind === 'tram') return <Tram door={door} line={line} destination={destination}/>;
+  if (kind === 'bus') return <Bus door={door} line={line} destination={destination}/>;
   const rail = ['metro', 'tram', 'train'].includes(kind);
-  const color = kind === 'bus' ? '#f4ba48' : kind === 'metro' ? '#71b7b6' : kind === 'train' ? '#7492c9' : kind === 'tram' ? '#b0a0d0' : '#e5b05e';
+  const color = kind === 'train' ? '#7492c9' : '#e5b05e';
   if (kind === 'ferry') return <group><Ball position={[0, .3, 0]} size={[1.8, .43, .7]} color="#fcf4df"/><Box position={[0, .68, 0]} size={[2.3, .5, 1]} color="#f1c557"/><Box position={[-.25, 1.15, 0]} size={[1.6, .48, .8]} color="#fff6e4"/>{[-.7, -.2, .3].map(x => <Box key={x} position={[x, 1.16, .415]} size={[.32, .24, .02]} color="#719dad"/>)}<Box position={[-.65, 1.6, 0]} size={[.2, .5, .2]} color="#e47d5c"/></group>;
   if (kind === 'bike') return <group>{[-.7, .7].map(x => <mesh key={x} position={[x, .45, 0]} rotation={[0, Math.PI / 2, 0]}><torusGeometry args={[.43, .055, 8, 24]}/><meshStandardMaterial color="#534c61"/></mesh>)}<Box position={[0, .72, 0]} size={[1.3, .1, .1]} color="#8caa72"/><Box position={[.5, 1.12, 0]} size={[.07, .75, .07]} color="#8caa72"/><Box position={[.5, 1.5, 0]} size={[.1, .06, .45]} color="#514b5d"/><Box position={[-.3, 1.07, 0]} size={[.42, .09, .21]} color="#514b5d"/></group>;
   if (kind === 'plane') return <group><Ball position={[0, .9, 0]} size={[1.8, .4, .4]} color="#fff5e2"/><Box position={[-.1, .7, 0]} size={[.7, .09, 3]} color="#8aa0cb"/><Box position={[-1.3, 1.3, 0]} size={[.5, .8, .08]} color="#e2a16c"/></group>;
@@ -95,14 +112,14 @@ function Vehicle({ kind, door }: { kind: VehicleKind; door: number }) {
     <Box position={[.95 + door * .28, 1.27, .637]} size={[.29, .45, .02]} color="#466777"/>
     <Box position={[1.54, .8, .37]} size={[.08, .17, .18]} color="#fff5c8"/>
     <Wheels long/>
-    {(kind === 'metro' || kind === 'train') && <group position={[-3.55, 0, 0]}>
+    {kind === 'train' && <group position={[-3.55, 0, 0]}>
       <Box position={[1.8, .92, 0]} size={[.35, 1.1, .9]} color="#81758d"/>
       <Box position={[0, 1, 0]} size={[3.3, 1.35, 1.1]} color={color}/>
       <Box position={[0, 1.72, 0]} size={[3.25, .12, 1.12]} color="#f0e7d8"/>
       {[-1.15, -.55, .05, .65, 1.2].map(wx => <Box key={wx} position={[wx, 1.24, .57]} size={[.42, .48, .035]} color="#4c687a"/>)}
       <Box position={[0, .57, .57]} size={[3.25, .13, .02]} color="#fff4df"/><Wheels long/>
     </group>}
-    {rail && <><Box position={[0, .27, 0]} size={[2.9, .18, .8]} color="#656277"/>{kind === 'tram' && <group position={[0, 2, 0]} rotation={[0, 0, .3]}><Box position={[0, .2, 0]} size={[.06, .5, .06]} color="#655b77"/><Box position={[0, .43, 0]} size={[.65, .04, .06]} color="#655b77"/></group>}</>}
+    {rail && <Box position={[0, .27, 0]} size={[2.9, .18, .8]} color="#656277"/>}
   </group>;
 }
 function Tree({ x, z, size = 1, color = '#93b783' }: { x: number; z: number; size?: number; color?: string }) {
@@ -132,12 +149,12 @@ function GlassTower({ x, z, door = 0 }: { x: number; z: number; door?: number })
     <Box position={[0, .035, 1.4]} size={[2.5, .07, .9]} color="#e6e6d6"/>
   </group>;
 }
-function DestinationBuilding({ x, home, door }: { x: number; home: boolean; door: number }) {
+function DestinationBuilding({ x, home, door, setback = -3.5 }: { x: number; home: boolean; door: number; setback?: number }) {
   if (!home) return <GlassTower x={x + 3.1} z={-3.5} door={door}/>;
   const height = home ? 3.6 : 5.8;
   const width = home ? 3.6 : 5.2;
   const color = home ? '#e9b87c' : '#a0b3bf';
-  return <group position={[x + 3.1, 0, -3.5]}>
+  return <group position={[x + 3.1, 0, setback]}>
     <Box position={[-(width + 1.05) / 4, .98, 0]} size={[(width - 1.05) / 2, 1.96, 2]} color={color}/><Box position={[(width + 1.05) / 4, .98, 0]} size={[(width - 1.05) / 2, 1.96, 2]} color={color}/>
     <Box position={[0, (height + 1.96) / 2, 0]} size={[width, height - 1.96, 2]} color={color}/>
     <Box position={[0, .97, -.2]} size={[1.05, 1.94, .08]} color="#574e60"/>
@@ -147,8 +164,8 @@ function DestinationBuilding({ x, home, door }: { x: number; home: boolean; door
     {[-1.25, 0, 1.25].flatMap(wx => Array.from({ length: home ? 1 : 3 }, (_, row) => <Box key={`${wx}-${row}`} position={[wx, 2.6 + row * 1.15, 1.03]} size={[.65, .7, .06]} color={home ? '#fff0cb' : '#d3e2df'}/>))}
   </group>;
 }
-function OriginBuilding({ apartment }: { apartment: boolean }) {
-  if (apartment) return <group position={[-2.8, 0, -3.5]}>
+function OriginBuilding({ apartment, setback = -3.5 }: { apartment: boolean; setback?: number }) {
+  if (apartment) return <group position={[-2.8, 0, setback]}>
     <Box position={[0, 2, 0]} size={[3.8, 4, 2.5]} color="#d7a59a"/>
     <Box position={[0, 4.15, 0]} size={[4.05, .3, 2.7]} color="#b98984"/>
     <Box position={[0, .62, 1.3]} size={[.8, 1.24, .13]} color="#799d95"/>
@@ -159,71 +176,92 @@ function OriginBuilding({ apartment }: { apartment: boolean }) {
   </group>;
   return <GlassTower x={-3.8} z={-3.5}/>;
 }
-function DepartureMonitor() {
-  return <group position={[1.65, 0, .65]} rotation={[0, -.15, 0]}>
-    <Box position={[0, .13, 0]} size={[1.25, .2, .8]} color="#82768b"/>
-    <Box position={[0, .88, 0]} size={[.16, 1.5, .16]} color="#82768b"/>
-  </group>;
-}
-function Stop({ x, kind }: { x: number; kind: VehicleKind }) {
+function Stop({ x, kind, darkness, name }: { x: number; kind: VehicleKind; darkness: number; name: string }) {
   return <group position={[x, 0, -1.1]}>
     <Box position={[0, .08, 0]} size={[3.5, .16, 1.5]} color="#eedbc6"/>
     <Box position={[-.55, 1.25, -.5]} size={[.08, 2.5, .08]} color="#82758e"/>
     <Box position={[.95, 1.25, -.5]} size={[.08, 2.5, .08]} color="#82758e"/>
     <Box position={[.2, 2.5, -.1]} size={[2.4, .14, 1.3]} color={kind === 'bus' ? '#efbe59' : '#ad9cc6'}/>
+    <group position={[.2, 2.12, .59]}><StationSign name={name} width={2.1}/></group>
+    {(kind === 'bus' || kind === 'tram') && <group name="shelter-light">
+      <mesh position={[.2, 2.39, -.1]}><boxGeometry args={[1.35, .06, .18]}/><meshStandardMaterial color="#f0e4c4" emissive="#ffda94" emissiveIntensity={darkness * 4}/></mesh>
+      <mesh position={[.2, .175, .05]} rotation={[-Math.PI / 2, 0, 0]} scale={[1.4, .8, 1]}><circleGeometry args={[1.3, 32]}/><meshBasicMaterial color="#ffdfaa" transparent opacity={darkness * .24} depthWrite={false}/></mesh>
+      {darkness > .05 && <pointLight position={[.2, 2.1, .05]} color="#ffdda3" intensity={darkness * 8} distance={5.5} decay={2}/>}
+    </group>}
     <Box position={[.2, 1.25, -.55]} size={[1.4, 2.3, .045]} color="#d4dfd1"/>
     <Box position={[.2, .6, -.18]} size={[1.3, .13, .4]} color="#ad8c75"/>
     <Box position={[1.8, 1.35, .3]} size={[.07, 2.7, .07]} color="#82758e"/>
     <mesh position={[1.8, 2.62, .32]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.28, .28, .07, 24]}/><meshStandardMaterial color={kind === 'bus' ? '#e8aa39' : '#9d86b9'}/></mesh>
   </group>;
 }
-function World({ stages, progress, reduced, onMonitorLayout, onActorLayout }: Props) {
+function World({ stages, progress, reduced, darkness, onMonitorLayout, onActorLayout }: Props) {
   const { camera, size, gl } = useThree();
   const avatar = useRef<THREE.Group>(null);
   const ride = useRef<THREE.Group>(null);
   const current = storyPosition(stages, progress);
   const route = useMemo(() => buildIllustratedRoute(stages), [stages]);
   const endX = stages[stages.length - 1].xEnd;
-  const entry = destinationEntry(progress, endX);
+  const hasMetro = stages.some(stage => stage.kind === 'metro');
+  const finalMetro = stages[stages.length - 1].kind === 'metro';
+  const entry = destinationEntry(progress, endX + (finalMetro ? 3 : 0));
   const trees = useMemo(() => Array.from({ length: Math.ceil(endX / 3) + 5 }, (_, i) => ({ x: -8 + i * 3.4, z: i % 3 === 0 ? 4 : -4.7, size: .65 + (i % 4) * .15 })), [endX]);
   const walking = current.stage.kind === 'walk';
   const waiting = current.stage.kind === 'wait';
   const nextStage = stages[current.index + 1];
+  const underground = metroJourney(stages, current.index, current.local);
+  const surfaceOffset = 0;
   const waitingForVehicle = waiting && nextStage && !['walk', 'wait'].includes(nextStage.kind);
   const walkingToVehicle = walking && nextStage && !['walk', 'wait'].includes(nextStage.kind);
   const motion = transitMotion(stages, current.index, current.local, reduced);
   const arriving = !walking && !waiting && motion.arriving;
   const arrival = waitingVehicle(walkingToVehicle ? (current.local - .45) / .55 : current.local, walkingToVehicle ? current.stage.xEnd : current.stage.xStart, reduced);
-  const boarding = !walking && !waiting && motion.boarding;
-  const alighting = !walking && !waiting && current.local > .925;
+  const boarding = underground.metro ? underground.boarding : !walking && !waiting && motion.boarding;
+  const alighting = underground.metro ? underground.alighting : !walking && !waiting && current.local > .925;
   const rideStart = current.stage.xStart;
-  const travel = walking || waiting ? current.local : motion.travel;
+  const travel = walking || waiting ? current.local : underground.metro ? underground.travel : motion.travel;
   const x = current.stage.xStart + (current.stage.xEnd - current.stage.xStart) * travel;
   const checking = progress < .018;
-  const boardingProgress = motion.boardingProgress;
-  const vehicleX = waitingForVehicle || walkingToVehicle ? arrival.x : arriving ? motion.arrival.x : boarding ? rideStart + .9 : x + .9;
-  const vehicleDoor = waitingForVehicle || walkingToVehicle ? arrival.door : arriving ? motion.arrival.door : boarding ? 1 - boardingProgress : 0;
-  const vehicleVisible = !checking && (waitingForVehicle || walkingToVehicle ? arrival.state !== 'approaching' : arriving ? motion.arrival.state !== 'approaching' : true);
+  const boardingProgress = underground.metro ? underground.boardingProgress : motion.boardingProgress;
+  const metroVehicle = underground.metro || (waitingForVehicle || walkingToVehicle) && nextStage?.kind === 'metro';
+  const vehicleX = underground.metro ? x + underground.arrivalOffset : waitingForVehicle || walkingToVehicle ? arrival.x - (metroVehicle ? .9 : 0) : arriving ? motion.arrival.x : boarding ? rideStart + .9 : x + .9;
+  const vehicleDoor = underground.metro ? underground.door : waitingForVehicle || walkingToVehicle ? arrival.door : arriving ? motion.arrival.door : boarding ? 1 - boardingProgress : 0;
+  const vehicleVisible = !checking && (underground.metro ? current.local >= .12 : metroVehicle ? false : waitingForVehicle || walkingToVehicle ? arrival.state !== 'approaching' : arriving ? motion.arrival.state !== 'approaching' : true);
   const monitorProjection = useMemo(() => ({ center: new THREE.Vector3(), left: new THREE.Vector3(), right: new THREE.Vector3() }), []);
   const actorProjection = useMemo(() => new THREE.Vector3(), []);
+  const descentStart = current.stage.xStart + (current.stage.xEnd - current.stage.xStart) * .7;
+  const descentX = underground.waitForMetro ? current.stage.xStart + underground.platformOffset : underground.walkToMetro ? descentStart + (current.stage.xEnd - descentStart) * underground.descent : current.stage.xStart - 3 * (1 - underground.descent);
+  const descending = underground.walkToMetro && current.local >= .7 || underground.waitForMetro && underground.descent > 0 && underground.descent < 1 || underground.metro && !underground.alreadyBelow && current.local < .12;
+  const metroActorX = underground.ascent > 0 ? current.stage.xEnd + underground.ascent * 3 : descending ? descentX : underground.platformOffset > 0 ? current.stage.xStart + underground.platformOffset : x;
+  const viewBlend = entry.active || reduced ? 0 : THREE.MathUtils.smoothstep(Math.abs(underground.depth / METRO_DEPTH), 0, 1);
+  const cameraY = (hasMetro ? 4.7 : 6.3) - viewBlend * 2.8;
+  const actorCenterY = underground.depth + 1;
+  const groundIntersection = Math.max(0, (.1 - actorCenterY) / Math.max(.1, cameraY - actorCenterY));
+  const actorWindowCenter = underground.metro && !underground.characterVisible ? vehicleX - 2.175 : metroActorX;
+  const windowCenter = actorWindowCenter + (6.2 - viewBlend * 2) * groundIntersection;
+  const windowLateral = (underground.metro && !underground.characterVisible ? 0 : 1.5) + (size.width < 650 ? 13.5 : 12.5) * groundIntersection;
+  const windowActive = underground.context && underground.phase !== 'surface' && !entry.active;
+  const undergroundWindow = useMemo(() => ({ center: windowCenter, lateral: windowLateral, active: windowActive }), [windowCenter, windowLateral, windowActive]);
   useFrame(() => {
-    const focus = route.sample(entry.active ? entry.x : x);
+    const justExitedMetro = walking && stages[current.index - 1]?.kind === 'metro';
+    const surfaceExitX = justExitedMetro ? x + 3 * (1 - current.local) : metroActorX;
+    const focus = route.sample(entry.active ? entry.x : underground.context || justExitedMetro ? surfaceExitX : x, entry.active ? 0 : surfaceOffset);
     const cameraX = focus.x + 1.7;
-    camera.position.set(cameraX + 4.5, 6.3, focus.z + (size.width < 650 ? 13.5 : 12.5));
-    camera.lookAt(cameraX, 1, focus.z);
+    const undergroundView = entry.active || reduced ? 0 : THREE.MathUtils.smoothstep(Math.abs(underground.depth / METRO_DEPTH), 0, 1);
+    camera.position.set(cameraX + 4.5 - undergroundView * 2, (hasMetro ? 4.7 : 6.3) - undergroundView * 2.8, focus.z + (size.width < 650 ? 13.5 : 12.5));
+    camera.lookAt(cameraX, hasMetro ? -.6 - undergroundView * .5 : 1, focus.z);
     if (camera instanceof THREE.OrthographicCamera) {
       const zoom = Math.min(size.width / (size.width < 650 ? 12 : 22), size.height / 9.5);
       if (Math.abs(camera.zoom - zoom) > .1) { camera.zoom = zoom; camera.updateProjectionMatrix(); }
     }
     camera.updateMatrixWorld();
     const origin = route.sample(0);
-    const monitorPoint = (along: number) => ({ x: origin.x + Math.cos(origin.yaw) * along + Math.sin(origin.yaw) * .65, z: origin.z - Math.sin(origin.yaw) * along + Math.cos(origin.yaw) * .65 });
-    const monitorCenter = monitorPoint(1.65);
-    const monitorLeft = monitorPoint(.325);
-    const monitorRight = monitorPoint(2.975);
-    monitorProjection.center.set(monitorCenter.x, 2, monitorCenter.z).project(camera);
-    monitorProjection.left.set(monitorLeft.x, 2, monitorLeft.z).project(camera);
-    monitorProjection.right.set(monitorRight.x, 2, monitorRight.z).project(camera);
+    const phonePoint = (along: number) => ({ x: origin.x + Math.cos(origin.yaw) * along + Math.sin(origin.yaw) * (1.37 + surfaceOffset), z: origin.z - Math.sin(origin.yaw) * along + Math.cos(origin.yaw) * (1.37 + surfaceOffset) });
+    const monitorCenter = phonePoint(x + .46);
+    const monitorLeft = phonePoint(x + .345);
+    const monitorRight = phonePoint(x + .575);
+    monitorProjection.center.set(monitorCenter.x, 1.45, monitorCenter.z).project(camera);
+    monitorProjection.left.set(monitorLeft.x, 1.45, monitorLeft.z).project(camera);
+    monitorProjection.right.set(monitorRight.x, 1.45, monitorRight.z).project(camera);
     onMonitorLayout((monitorProjection.center.x + 1) * size.width / 2, (1 - monitorProjection.center.y) * size.height / 2, Math.abs(monitorProjection.right.x - monitorProjection.left.x) * size.width / 2, size.width);
     if (avatar.current) {
       avatar.current.visible = walking || waiting || arriving || boarding || alighting || progress >= .998;
@@ -237,12 +275,30 @@ function World({ stages, progress, reduced, onMonitorLayout, onActorLayout }: Pr
         avatar.current.rotation.y = entry.rotation;
         avatar.current.scale.setScalar(1);
       }
-      const p = route.sample(avatar.current.position.x, avatar.current.position.z);
-      avatar.current.position.set(p.x, .15, p.z);
+      if (underground.context && !entry.active) {
+        avatar.current.position.x = metroActorX;
+        avatar.current.position.z = underground.metro ? boarding ? 1.5 * (1 - boardingProgress) : alighting ? 1.5 * underground.alightingProgress : 1.5 : 1.5;
+        avatar.current.visible = underground.characterVisible;
+      }
+      if (justExitedMetro && !entry.active) { avatar.current.position.x = surfaceExitX; avatar.current.position.z = 1.05 + .45 * (1 - current.local); }
+      const p = route.sample(avatar.current.position.x, avatar.current.position.z + (entry.active ? 0 : surfaceOffset));
+      avatar.current.position.set(p.x, .15 + (entry.active ? 0 : underground.depth), p.z);
       avatar.current.rotation.y += p.yaw;
     }
-    const vehiclePosition = route.sample(vehicleX);
-    if (ride.current) { ride.current.position.set(vehiclePosition.x, .15, vehiclePosition.z); ride.current.rotation.y = vehiclePosition.yaw; ride.current.visible = vehicleVisible; }
+    const vehicleLateral = 0;
+    const vehiclePosition = route.sample(vehicleX, vehicleLateral);
+    gl.domElement.dataset.vehicleLateral = vehicleLateral.toFixed(3);
+    if (ride.current) { ride.current.position.set(vehiclePosition.x, metroVehicle ? METRO_DEPTH + .01 : .15, vehiclePosition.z); ride.current.rotation.y = vehiclePosition.yaw; ride.current.visible = vehicleVisible; }
+    gl.domElement.dataset.metroPhase = underground.phase;
+    gl.domElement.dataset.streetlights = darkness > .05 ? 'on' : 'off';
+    gl.domElement.dataset.metroSequence = underground.sequence;
+    gl.domElement.dataset.cameraHeight = camera.position.y.toFixed(3);
+    gl.domElement.dataset.undergroundCameraBlend = undergroundView.toFixed(3);
+    gl.domElement.dataset.metroTravel = underground.travel.toFixed(3);
+    gl.domElement.dataset.undergroundWindow = undergroundWindow.active ? 'visible' : 'hidden';
+    gl.domElement.dataset.windowCenter = undergroundWindow.center.toFixed(3);
+    gl.domElement.dataset.characterDepth = underground.depth.toFixed(3);
+    gl.domElement.dataset.vehicleDepth = (metroVehicle ? METRO_DEPTH : 0).toFixed(3);
     gl.domElement.dataset.routeGeometry = route.hasGeometry ? 'entur' : 'illustrative';
     gl.domElement.dataset.routeX = focus.x.toFixed(3);
     gl.domElement.dataset.routeZ = focus.z.toFixed(3);
@@ -256,21 +312,27 @@ function World({ stages, progress, reduced, onMonitorLayout, onActorLayout }: Pr
     const characterVisible = walking || waiting || arriving || boarding || alighting || checking || progress >= .998;
     const characterX = boarding ? rideStart + boardingProgress * .9 : alighting ? x + .9 * (1 - (current.local - .925) / .075) : x;
     const characterZ = boarding ? 1.05 - boardingProgress * .9 : alighting ? .15 + (current.local - .925) / .075 * .9 : 1.05;
-    const bubblePosition = route.sample(entry.active ? entry.x : characterVisible ? characterX : x + .9, entry.active ? entry.z : characterVisible ? characterZ : 0);
-    actorProjection.set(bubblePosition.x, characterVisible || entry.active ? 2.2 : 2.5, bubblePosition.z).project(camera);
-    onActorLayout((actorProjection.x + 1) * size.width / 2, (1 - actorProjection.y) * size.height / 2, characterVisible ? 'character' : 'vehicle');
+    const visibleActor = underground.metro ? underground.characterVisible : characterVisible;
+    const bubblePosition = route.sample(entry.active ? entry.x : (underground.context || justExitedMetro) && visibleActor ? metroActorX : visibleActor ? characterX : metroVehicle ? vehicleX : x + .9, entry.active ? entry.z : underground.metro && visibleActor ? boarding ? 1.5 * (1 - boardingProgress) : alighting ? 1.5 * underground.alightingProgress : 1.5 : visibleActor ? characterZ : 0);
+    const bubbleOffset = entry.active ? 0 : visibleActor ? surfaceOffset : vehicleLateral;
+    const bubbleYaw = route.sample(entry.active ? entry.x : x).yaw;
+    actorProjection.set(bubblePosition.x + Math.sin(bubbleYaw) * bubbleOffset, (visibleActor || entry.active ? 2.2 : 2.5) + (entry.active ? 0 : visibleActor ? underground.depth : metroVehicle ? METRO_DEPTH : 0), bubblePosition.z + Math.cos(bubbleYaw) * bubbleOffset).project(camera);
+    onActorLayout((actorProjection.x + 1) * size.width / 2, (1 - actorProjection.y) * size.height / 2, visibleActor ? 'character' : 'vehicle');
   });
   return <>
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -.1, 0]} receiveShadow onAfterRender={() => { gl.domElement.dataset.ready = 'true'; }}><planeGeometry args={[endX * 4 + 100, endX * 4 + 100]}/><meshStandardMaterial color="#e7d7ae"/></mesh>
+    <UndergroundMask route={route} window={undergroundWindow} stages={stages}/>
+    <CutawayGround route={route} stages={stages} window={undergroundWindow} onReady={() => { gl.domElement.dataset.ready = 'true'; }}/>
     <RouteScenery route={route} stages={stages}/>
-    <RoutePlacement route={route} distance={0}><OriginBuilding apartment/><DepartureMonitor/></RoutePlacement>
-    <RoutePlacement route={route} distance={endX}><DestinationBuilding x={endX} home door={entry.door}/></RoutePlacement>
-    {Array.from({ length: Math.ceil(endX / 9) }, (_, i) => <RoutePlacement key={`building-${i}`} route={route} distance={7 + i * 9}><Building x={7 + i * 9} z={-5.5 - i % 2 * 1.5} color={['#c9b6c9', '#d5aa9e', '#dfbc85', '#a8bfa6'][i % 4]} height={2.2 + i % 3 * .8}/></RoutePlacement>)}
-    {trees.map((tree, i) => <RoutePlacement key={`tree-${tree.x}`} route={route} distance={tree.x}><Tree {...tree} color={i % 3 === 0 ? '#b7b587' : '#94b18c'}/></RoutePlacement>)}
-    {Array.from({ length: Math.ceil(endX / 5) + 2 }, (_, i) => <RoutePlacement key={`flowers-${i}`} route={route} distance={i * 5 - 4}><group position={[i * 5 - 4, .12, 3.2]}>{[0, 1, 2].map(j => <Ball key={j} position={[j * .19, .05, (j % 2) * .12]} size={[.12, .13, .12]} color={j % 2 ? '#d59da8' : '#e8c165'}/>)}</group></RoutePlacement>)}
-    {stages.filter(s => !['walk', 'wait', 'bike', 'plane'].includes(s.kind)).map(s => <group key={`stops-${s.id}`}><RoutePlacement route={route} distance={s.xStart}><Stop x={s.xStart} kind={s.kind}/></RoutePlacement><RoutePlacement route={route} distance={s.xEnd}><Stop x={s.xEnd} kind={s.kind}/></RoutePlacement></group>)}
-    <group ref={avatar}><Character key={waiting ? 'waiting' : 'travelling'} phase={reduced || checking ? 0 : entry.active ? entry.phase * 30 : current.local * (current.stage.xEnd - current.stage.xStart) * 5} walking={(walking || entry.active) && !reduced && !checking && progress < 1} arrived={progress >= .998} waiting={waiting} reduced={reduced}/></group>
-    {(!walking && !waiting || waitingForVehicle || walkingToVehicle) && <group ref={ride}><Vehicle kind={waitingForVehicle || walkingToVehicle ? nextStage.kind : current.stage.kind} door={vehicleDoor}/></group>}
+    <StreetLights route={route} stages={stages} darkness={darkness}/>
+    <MetroScenery route={route} stages={stages} window={undergroundWindow}/>
+    <RoutePlacement route={route} distance={0}><OriginBuilding apartment/></RoutePlacement>
+    <RoutePlacement route={route} distance={endX + (finalMetro ? 3 : 0)}><DestinationBuilding x={endX + (finalMetro ? 3 : 0)} home door={entry.door}/></RoutePlacement>
+    {Array.from({ length: Math.ceil(endX / 9) }, (_, i) => { const setback = -5.5 - i % 2 * 1.5; return <group key={`building-${i}`} visible={!overlapsUndergroundWindow(undergroundWindow, 7 + i * 9, setback, 1.9)}><RoutePlacement route={route} distance={7 + i * 9}><Building x={7 + i * 9} z={setback} color={['#c9b6c9', '#d5aa9e', '#dfbc85', '#a8bfa6'][i % 4]} height={2.2 + i % 3 * .8}/></RoutePlacement></group>; })}
+    {trees.map((tree, i) => <group key={`tree-${tree.x}`} name="surface-tree" visible={!overlapsUndergroundWindow(undergroundWindow, tree.x, tree.z, tree.size)}><RoutePlacement route={route} distance={tree.x}><Tree {...tree} color={i % 3 === 0 ? '#b7b587' : '#94b18c'}/></RoutePlacement></group>)}
+    {Array.from({ length: Math.ceil(endX / 5) + 2 }, (_, i) => <group key={`flowers-${i}`} name="surface-flowers" visible={!overlapsUndergroundWindow(undergroundWindow, i * 5 - 4, 3.2, .6)}><RoutePlacement route={route} distance={i * 5 - 4}><group position={[i * 5 - 4, .12, 3.2]}>{[0, 1, 2].map(j => <Ball key={j} position={[j * .19, .05, (j % 2) * .12]} size={[.12, .13, .12]} color={j % 2 ? '#d59da8' : '#e8c165'}/>)}</group></RoutePlacement></group>)}
+    {stages.filter(s => !['walk', 'wait', 'bike', 'plane', 'metro'].includes(s.kind)).map(s => <group key={`stops-${s.id}`}><RoutePlacement route={route} distance={s.xStart}><Stop x={s.xStart} kind={s.kind} darkness={darkness} name={s.leg.fromPlace.name}/></RoutePlacement><RoutePlacement route={route} distance={s.xEnd}><Stop x={s.xEnd} kind={s.kind} darkness={darkness} name={s.leg.toPlace.name}/></RoutePlacement></group>)}
+    <group ref={avatar}><Character key={waiting ? 'waiting' : checking ? 'phone' : 'travelling'} phase={reduced || checking ? 0 : entry.active ? entry.phase * 30 : current.local * (current.stage.xEnd - current.stage.xStart) * 5} walking={(walking || entry.active) && !reduced && !checking && progress < 1} arrived={progress >= .998} waiting={waiting} reduced={reduced} checkingPhone={checking}/></group>
+    {(!walking && !waiting || waitingForVehicle || walkingToVehicle) && <group ref={ride}><Vehicle kind={waitingForVehicle || walkingToVehicle ? nextStage.kind : current.stage.kind} door={vehicleDoor} line={(waitingForVehicle || walkingToVehicle ? nextStage : current.stage).leg.line?.publicCode ?? ''} destination={(waitingForVehicle || walkingToVehicle ? nextStage : current.stage).leg.toPlace.name}/></group>}
     {progress > .985 && <RoutePlacement route={route} distance={endX}><group position={[endX + 1, 2.4, 0]}>{[0, 1, 2, 3, 4].map(i => <mesh key={i} position={[Math.sin(i * 2) * .9, Math.cos(i * 2) * .6, .2]} rotation={[0, 0, i]}><boxGeometry args={[.11, .23, .04]}/><meshStandardMaterial color={['#e7b548', '#a18bc3', '#86afa3'][i % 3]}/></mesh>)}</group></RoutePlacement>}
   </>;
 }
@@ -302,7 +364,7 @@ class SceneBoundary extends Component<{ children: ReactNode; fallback: ReactNode
 export default function JourneyScene(props: Props) {
   const fallback = <FlatFallback {...props}/>;
   return <SceneBoundary fallback={fallback}><Canvas frameloop="demand" orthographic shadows dpr={[1, 1.6]} camera={{ position: [4, 6, 13], zoom: 45, near: .1, far: 250 }} fallback={fallback} gl={{ antialias: true, alpha: true }}>
-    <fog attach="fog" args={['#f8dfca', 30, 85]}/><ambientLight intensity={1.5}/><hemisphereLight args={['#fff4dd', '#b6b1cb', 1.3]}/><directionalLight position={[-8, 14, 9]} intensity={2.6} castShadow shadow-mapSize={[1024, 1024]} shadow-camera-left={-100} shadow-camera-right={100} shadow-camera-top={35} shadow-camera-bottom={-35} shadow-normalBias={.035}/>
+    <fog attach="fog" args={[props.fogColor, 30, 85]}/><ambientLight intensity={1.5 - props.darkness * 1.05}/><hemisphereLight args={[props.darkness > .5 ? '#a8b9e0' : '#fff4dd', '#858196', 1.3 - props.darkness * .7]}/><directionalLight position={[-8, 14, 9]} color={props.darkness > .5 ? '#a9bce4' : '#fff4dc'} intensity={2.6 - props.darkness * 2.05} castShadow shadow-mapSize={[1024, 1024]} shadow-camera-left={-100} shadow-camera-right={100} shadow-camera-top={35} shadow-camera-bottom={-35} shadow-normalBias={.035}/>
     <World {...props}/>
   </Canvas></SceneBoundary>;
 }

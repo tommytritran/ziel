@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { IllustratedRoute } from './routeGeometry';
 import type { StoryStage } from './story';
 
-function Ribbon({ route, start, end, lateral, width, y, color }: { route: IllustratedRoute; start: number; end: number; lateral: number; width: number; y: number; color: string }) {
+export function Ribbon({ route, start, end, lateral, width, y, color }: { route: IllustratedRoute; start: number; end: number; lateral: number; width: number; y: number; color: string }) {
   const geometry = useMemo(() => {
     const count = Math.min(600, Math.max(2, Math.ceil((end - start) * 4)));
     const positions: number[] = []; const indices: number[] = [];
@@ -17,7 +17,7 @@ function Ribbon({ route, start, end, lateral, width, y, color }: { route: Illust
     return result;
   }, [route, start, end, lateral, width, y]);
   useEffect(() => () => geometry.dispose(), [geometry]);
-  return <mesh geometry={geometry} receiveShadow><meshStandardMaterial color={color} side={THREE.DoubleSide} roughness={.9}/></mesh>;
+  return <mesh geometry={geometry} receiveShadow><meshStandardMaterial color={color} side={THREE.DoubleSide} roughness={.9} userData={{ stationSurface: y >= 0 }}/></mesh>;
 }
 export default function RouteScenery({ route, stages }: { route: IllustratedRoute; stages: StoryStage[] }) {
   const end = stages[stages.length - 1].xEnd;
@@ -29,6 +29,6 @@ export default function RouteScenery({ route, stages }: { route: IllustratedRout
     <Ribbon route={route} start={-15} end={end + 15} lateral={1.35} width={.16} y={.11} color="#f6e5c8"/>
     <Ribbon route={route} start={-15} end={end + 15} lateral={-2.2} width={.16} y={.11} color="#f6e5c8"/>
     {Array.from({ length: Math.ceil(end / 2.7) + 9 }, (_, i) => { const p = route.sample(-10 + i * 2.7, -.6); return <mesh key={`mark-${i}`} position={[p.x, .12, p.z]} rotation={[0, p.yaw, 0]}><boxGeometry args={[1.1, .012, .07]}/><meshStandardMaterial color="#f0ddd0"/></mesh>; })}
-    {stages.filter(s => ['metro', 'tram', 'train'].includes(s.kind)).flatMap(stage => [-.4, .4].map(offset => <Ribbon key={`${stage.id}-${offset}`} route={route} start={stage.xStart - 1} end={stage.xEnd + 1} lateral={offset} width={.045} y={.13} color="#7d768e"/>))}
+    {stages.filter(s => ['tram', 'train'].includes(s.kind)).flatMap(stage => [-.4, .4].map(offset => <Ribbon key={`${stage.id}-${offset}`} route={route} start={stage.xStart - 1} end={stage.xEnd + 1} lateral={offset} width={.045} y={.13} color="#7d768e"/>))}
   </>;
 }
