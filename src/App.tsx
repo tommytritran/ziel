@@ -1,0 +1,37 @@
+import { useState } from 'react';
+import { ArrowRight, Check, ChevronRight, Compass, MapPin, RefreshCw, Route, X } from 'lucide-react';
+import { dateLabel, makePreview, minutes, timeLabel } from './commute';
+import { exampleRoute } from './planner';
+import { vehicleKind } from './story';
+import useJourneyPlanner from './useJourneyPlanner';
+import PlannerForm from './PlannerForm';
+import JourneyStory, { ModeIcon } from './JourneyStory';
+import DetailsDialog from './DetailsDialog';
+
+export default function App() {
+  const [exploring, setExploring] = useState(false);
+  const [details, setDetails] = useState(false);
+  const [demo, setDemo] = useState(false);
+  const [demoSelected, setDemoSelected] = useState(0);
+  const [demoChosen, setDemoChosen] = useState(false);
+  const [demoJourneys, setDemoJourneys] = useState(() => makePreview());
+  const planner = useJourneyPlanner(exploring);
+  const preview = !planner.request;
+  const request = planner.request ?? exampleRoute;
+  const available = preview ? demoJourneys : planner.journeys;
+  const selected = preview ? demoSelected : planner.selected;
+  const journey = available[selected];
+  const showStory = Boolean(planner.request || demo);
+  const select = (index: number) => { if (preview) { setDemoSelected(index); setDemoChosen(true); } else planner.selectJourney(index); };
+  const refresh = () => { if (preview) { setDemoJourneys(makePreview()); setDemoChosen(false); setDemoSelected(0); } else planner.refresh(); };
+  return <div className="app-shell planner-shell">
+    <header className="site-header"><a className="brand" href="/" aria-label="Ziel journey planner">ziel<span className="brand-spark">✳</span></a><span className="brand-caption">A BETTER WAY TO GET THERE.</span><span className="planner-header-tag"><span/>PUBLIC TRANSPORT, ALL OF NORWAY</span><a className="entur-header" href="https://developer.entur.no/" target="_blank" rel="noreferrer">Powered by Entur ↗</a></header>
+    <main className="planner-layout"><aside className="planner-sidebar"><div className="planner-intro"><span className="eyebrow"><Compass size={13}/> YOUR NEXT JOURNEY</span><h1>Where are<br/>you heading?</h1><p>Find your route. See how it unfolds.</p></div><PlannerForm loading={planner.loading} onPlan={(next, remember) => { setDetails(false); planner.plan(next, remember); }}/>
+      {planner.notice && <output className="planner-notice">{planner.notice}<button type="button" aria-label="Dismiss notification" onClick={() => planner.setNotice('')}><X size={13}/></button></output>}
+      {showStory && <section className="planner-results" aria-label="Journey options"><div className="results-heading"><h2>{preview ? 'Example journeys' : 'Your journey options'}</h2><span>{planner.loading ? 'SEARCHING' : `${available.length} OPTIONS`}</span></div>{available.map((option, index) => <button type="button" key={`${index}-${option.legs[0].expectedStartTime}`} className={`planner-result ${selected === index ? 'selected' : ''}`} aria-label={`Choose journey ${index + 1}, ${minutes(option.duration)} minutes`} aria-pressed={selected === index} onClick={() => select(index)}><span className="result-times">{timeLabel(option.legs[0].expectedStartTime)}<ArrowRight size={12}/>{timeLabel(option.legs.at(-1)!.expectedEndTime)}<strong>{minutes(option.duration)}<small> min</small></strong></span><><span className="result-dates">{dateLabel(option.legs[0].expectedStartTime)} → {dateLabel(option.legs.at(-1)!.expectedEndTime)}</span><span className="result-modes">{option.legs.map((leg, i) => <span key={`${leg.expectedStartTime}-${i}`}>{i > 0 && <ChevronRight size={10}/>}<ModeIcon kind={vehicleKind(leg.mode)} size={13}/>{leg.line?.publicCode}</span>)}<span className="result-check">{selected === index ? <Check size={13}/> : index === 0 ? 'Suggested' : ''}</span></span></></button>)}{planner.error && <div className="planner-error" role="alert"><p>{planner.error}</p><button type="button" onClick={refresh}>Try again<RefreshCw size={13}/></button></div>}</section>}
+      <div className="planner-sidebar-footer"><Route size={14}/><p>Real routes. A fresh perspective.<br/><span>Your journey, one step at a time.</span></p></div>
+    </aside><section className="planner-experience" aria-label="Journey visualization">
+      {!showStory ? <div className="planner-welcome"><div className="welcome-top"><span className="eyebrow">FROM ANYWHERE. TO SOMETHING NEW.</span><span className="welcome-stamp">LET’S GO ↗</span></div><div className="welcome-copy"><span className="welcome-kicker">THE WAY THERE IS PART OF IT.</span><h2>A journey worth<br/><span>looking forward to.</span></h2><p>Across town or across the country.<br/>Choose your starting point and destination,<br/>and we’ll bring the journey to life.</p></div><div className="welcome-art" aria-hidden="true"><div className="welcome-sun"/><div className="welcome-hill hill-back"/><div className="welcome-hill hill-front"/><svg viewBox="0 0 640 280"><path d="M-30 260C160 255 90 100 275 152S420 80 690 52" stroke="#d7c4d8" strokeWidth="30" fill="none"/><path d="M-30 260C160 255 90 100 275 152S420 80 690 52" stroke="#fff1d5" strokeWidth="2" strokeDasharray="11 13" fill="none"/><circle cx="126" cy="202" r="9" fill="#c68067"/><circle cx="535" cy="72" r="9" fill="#7f9f87"/></svg><div className="welcome-pin pin-from"><MapPin size={17}/><span>Your starting point</span></div><div className="welcome-pin pin-to"><MapPin size={17}/><span>Somewhere new</span></div></div><button type="button" className="welcome-preview" onClick={() => setDemo(true)}>Explore an example journey<ArrowRight size={16}/></button><span className="welcome-footnote">Walking, bus, tram, metro, rail and more.</span></div> : <><div className="journey-toolbar"><div className="planned-route"><MapPin size={13}/><span>{request.from.name}</span><ArrowRight size={12}/><strong>{request.to.name}</strong>{request.dateTime && <small>{request.arriveBy ? 'Arrive by' : 'Depart at'} {dateLabel(request.dateTime)} {timeLabel(request.dateTime)} (Norway)</small>}</div><div><button type="button" className="toolbar-button" onClick={() => setDetails(true)} disabled={!journey}>Journey details<ArrowRight size={12}/></button><button type="button" className={`toolbar-refresh ${planner.loading ? 'spin' : ''}`} onClick={refresh} disabled={planner.loading} aria-label="Refresh journeys"><RefreshCw size={13}/></button></div></div>{planner.loading ? <div className="empty-story" role="status"><span className="empty-spark">✳</span><h2>Finding your route.</h2><p>Checking journey options with Entur…</p></div> : planner.error ? <div className="empty-story"><span className="empty-spark">↝</span><h2>Let’s try another way.</h2><p>Adjust your search or retry to find a route.</p></div> : journey && <JourneyStory key={`${request.from.id}-${request.to.id}`} journey={journey} journeys={available} selected={selected} chosen={preview ? demoChosen : planner.chosen} onSelect={select} onRefresh={refresh} fromName={request.from.name} toName={request.to.name} preview={preview} onSetup={() => document.getElementById('planner-From')?.focus()} onExploring={setExploring}/>}</>}
+    </section></main>{details && <DetailsDialog journey={journey} request={request} preview={preview} onClose={() => setDetails(false)}/>}
+  </div>;
+}
